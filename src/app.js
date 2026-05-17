@@ -203,9 +203,9 @@ async function start() {
   else listEl.innerHTML = `<li class="placeholder">Sign in (top-right button) to browse your pod.</li>`;
 }
 
-// Re-init when xlogin's identity changes
-if (window.xlogin) {
-  window.addEventListener('xlogin:ready', start);
-  window.addEventListener('xlogin:change', start);
-}
+// xlogin restores its session asynchronously and fires `xlogin` /
+// `xlogout` CustomEvents on `document`. Run start() once now (in case
+// the session is already restored), then again whenever auth changes.
+document.addEventListener('xlogin', start);
+document.addEventListener('xlogout', start);
 start();
