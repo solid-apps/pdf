@@ -173,18 +173,23 @@ const STATE_URL = `${window.location.origin}/public/pdf/state.jsonld`;
 const STATE_ACL = STATE_URL + '.acl';
 let pushTimer = null;
 let lastPushed = null;
-let stateInitialized = false;
 
+// Self-healing seed: probe doc + ACL on every call and PUT whichever
+// is missing. No sticky cache — page load may run this before xlogin
+// restored its session, in which case the PUTs 401 silently; the next
+// `pushState()` retries with auth ready. Also recovers if state.jsonld
+// or its ACL is deleted at runtime. Two HEADs per call is cheap and
+// gated by pushState's 120ms debounce.
 async function ensureStateDoc() {
-  if (stateInitialized) return;
-  stateInitialized = true;
-  // Doc and ACL are checked independently: if a prior session created
-  // the doc but failed to seed the ACL (or vice versa), the next run
-  // fills in what's missing instead of skipping both.
+  // Seed the doc if missing.
+  let docOk = false;
   try {
-    const dr = await authFetch(STATE_URL, { method: 'HEAD' });
-    if (!dr.ok) {
-      await authFetch(STATE_URL, {
+    const r = await authFetch(STATE_URL, { method: 'HEAD' });
+    docOk = r.ok;
+  } catch {}
+  if (!docOk) {
+    try {
+      const r = await authFetch(STATE_URL, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/ld+json' },
         body: JSON.stringify({
@@ -196,14 +201,20 @@ async function ensureStateDoc() {
           'schema:dateModified': new Date().toISOString()
         })
       });
-    }
-  } catch (e) { console.warn('Could not seed state doc:', e.message); }
+      if (!r.ok) console.warn(`state doc PUT failed: HTTP ${r.status}`);
+    } catch (e) { console.warn('Could not seed state doc:', e.message); }
+  }
 
-  // JSS rejects Turtle for ACL writes — must be application/ld+json.
+  // Seed the ACL if missing. JSS rejects Turtle for ACL writes — must
+  // be application/ld+json.
+  let aclOk = false;
   try {
-    const ar = await authFetch(STATE_ACL, { method: 'HEAD' });
-    if (!ar.ok) {
-      await authFetch(STATE_ACL, {
+    const r = await authFetch(STATE_ACL, { method: 'HEAD' });
+    aclOk = r.ok;
+  } catch {}
+  if (!aclOk) {
+    try {
+      const r = await authFetch(STATE_ACL, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/ld+json' },
         body: JSON.stringify({
@@ -229,8 +240,9 @@ async function ensureStateDoc() {
           ]
         })
       });
-    }
-  } catch (e) { console.warn('Could not seed state ACL:', e.message); }
+      if (!r.ok) console.warn(`state ACL PUT failed: HTTP ${r.status}`);
+    } catch (e) { console.warn('Could not seed state ACL:', e.message); }
+  }
 }
 
 function pushState() {
