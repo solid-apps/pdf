@@ -17,7 +17,10 @@ const pageEl  = $('page');
 const zoomIn  = $('zoomIn');
 const zoomOut = $('zoomOut');
 const zoomEl  = $('zoom');
+const fitBtn  = $('fit');
+const fsBtn   = $('fullscreen');
 const titleEl = $('title');
+const viewer  = document.querySelector('.viewer');
 
 let currentDir = null;
 let currentDoc = null;
@@ -106,7 +109,7 @@ async function openPdf(url, li) {
     currentDoc = await pdfjsLib.getDocument({ data: ab }).promise;
     pageNum = 1;
     scale = await fitPageScale(currentDoc);
-    [prevBtn, nextBtn, zoomIn, zoomOut].forEach(b => b.disabled = false);
+    [prevBtn, nextBtn, zoomIn, zoomOut, fitBtn, fsBtn].forEach(b => b.disabled = false);
     renderPage();
   } catch (e) {
     titleEl.textContent = 'Error: ' + e.message;
@@ -146,11 +149,38 @@ prevBtn.addEventListener('click', () => { if (pageNum > 1) { pageNum--; renderPa
 nextBtn.addEventListener('click', () => { if (currentDoc && pageNum < currentDoc.numPages) { pageNum++; renderPage(); } });
 zoomIn.addEventListener('click', () => { scale = Math.min(scale * 1.25, 4); renderPage(); });
 zoomOut.addEventListener('click', () => { scale = Math.max(scale / 1.25, 0.25); renderPage(); });
+fitBtn.addEventListener('click', async () => {
+  if (!currentDoc) return;
+  scale = await fitPageScale(currentDoc);
+  renderPage();
+});
+fsBtn.addEventListener('click', toggleFullscreen);
+
+function toggleFullscreen() {
+  if (document.fullscreenElement) document.exitFullscreen();
+  else viewer.requestFullscreen?.();
+}
+
+// Refit after fullscreen enter/exit (or any resize) so the page tracks
+// the new pane dimensions.
+document.addEventListener('fullscreenchange', refit);
+window.addEventListener('resize', refit);
+let refitTimer = null;
+async function refit() {
+  if (!currentDoc) return;
+  // Debounce: rapid resizes during transitions
+  clearTimeout(refitTimer);
+  refitTimer = setTimeout(async () => {
+    scale = await fitPageScale(currentDoc);
+    renderPage();
+  }, 80);
+}
 
 document.addEventListener('keydown', (e) => {
   if (!currentDoc) return;
   if (e.key === 'ArrowRight' || e.key === 'PageDown') nextBtn.click();
   else if (e.key === 'ArrowLeft' || e.key === 'PageUp') prevBtn.click();
+  else if (e.key === 'f' || e.key === 'F') toggleFullscreen();
 });
 
 function drawBreadcrumb() {
