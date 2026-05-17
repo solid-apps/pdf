@@ -105,13 +105,25 @@ async function openPdf(url, li) {
     const ab = await r.arrayBuffer();
     currentDoc = await pdfjsLib.getDocument({ data: ab }).promise;
     pageNum = 1;
-    scale = 1.0;
+    scale = await fitWidthScale(currentDoc);
     [prevBtn, nextBtn, zoomIn, zoomOut].forEach(b => b.disabled = false);
     renderPage();
   } catch (e) {
     titleEl.textContent = 'Error: ' + e.message;
     currentDoc = null;
   }
+}
+
+// Default scale: fit the first page's width to the viewer pane (minus
+// padding) so the doc lands at a sensible size instead of 100% native,
+// which is wider than the pane for most PDFs.
+async function fitWidthScale(doc) {
+  const page = await doc.getPage(1);
+  const native = page.getViewport({ scale: 1 });
+  const wrap = canvas.parentElement;
+  // .canvas-wrap has 20px padding each side; account for it.
+  const available = Math.max(wrap.clientWidth - 40, 200);
+  return available / native.width;
 }
 
 async function renderPage() {
