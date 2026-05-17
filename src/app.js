@@ -346,8 +346,12 @@ async function refit() {
 
 document.addEventListener('keydown', (e) => {
   if (!currentDoc) return;
+  // Space = next page; Shift+Space = previous (matches PDF viewer convention).
+  // Skip when typing in an input/textarea so spaces in forms work normally.
+  const inField = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName);
   if (e.key === 'ArrowRight' || e.key === 'PageDown') nextBtn.click();
   else if (e.key === 'ArrowLeft' || e.key === 'PageUp') prevBtn.click();
+  else if (e.key === ' ' && !inField) { e.preventDefault(); (e.shiftKey ? prevBtn : nextBtn).click(); }
   else if (e.key === 'f' || e.key === 'F') toggleFullscreen();
 });
 
