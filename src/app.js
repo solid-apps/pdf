@@ -105,7 +105,7 @@ async function openPdf(url, li) {
     const ab = await r.arrayBuffer();
     currentDoc = await pdfjsLib.getDocument({ data: ab }).promise;
     pageNum = 1;
-    scale = await fitWidthScale(currentDoc);
+    scale = await fitPageScale(currentDoc);
     [prevBtn, nextBtn, zoomIn, zoomOut].forEach(b => b.disabled = false);
     renderPage();
   } catch (e) {
@@ -114,16 +114,16 @@ async function openPdf(url, li) {
   }
 }
 
-// Default scale: fit the first page's width to the viewer pane (minus
-// padding) so the doc lands at a sensible size instead of 100% native,
-// which is wider than the pane for most PDFs.
-async function fitWidthScale(doc) {
+// Default scale: fit the first page entirely inside the viewer pane
+// (both dimensions, no scrolling). Most PDF readers default to this.
+async function fitPageScale(doc) {
   const page = await doc.getPage(1);
   const native = page.getViewport({ scale: 1 });
   const wrap = canvas.parentElement;
-  // .canvas-wrap has 20px padding each side; account for it.
-  const available = Math.max(wrap.clientWidth - 40, 200);
-  return available / native.width;
+  // .canvas-wrap has 20px padding on every side; account for it.
+  const w = Math.max(wrap.clientWidth - 40, 200);
+  const h = Math.max(wrap.clientHeight - 40, 200);
+  return Math.min(w / native.width, h / native.height);
 }
 
 async function renderPage() {
