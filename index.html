@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>PDF · Solid</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="style.css">
+  <script src="https://unpkg.com/xlogin"></script>
+</head>
+<body>
+  <header>
+    <h1><a href="#">PDF</a></h1>
+    <p class="hint">Read PDFs from your pod.</p>
+  </header>
+  <main class="layout">
+    <aside class="sidebar">
+      <div class="bc" id="bc"></div>
+      <ul class="list" id="list"><li class="placeholder">Sign in to browse your pod.</li></ul>
+    </aside>
+    <section class="viewer">
+      <div class="toolbar">
+        <button id="prev" disabled>◀</button>
+        <span id="page">—</span>
+        <button id="next" disabled>▶</button>
+        <span class="sep"></span>
+        <button id="zoomOut" disabled>−</button>
+        <span id="zoom">100%</span>
+        <button id="zoomIn" disabled>+</button>
+        <span class="sep"></span>
+        <span id="title" class="title">No PDF loaded</span>
+      </div>
+      <div class="canvas-wrap"><canvas id="canvas"></canvas></div>
+    </section>
+  </main>
+  <script type="module" src="src/app.js"></script>
+</body>
+</html>
