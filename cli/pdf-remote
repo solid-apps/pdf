@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+# pdf-remote — flip the page on a Solid-pod-backed PDF viewer.
+#
+# The viewer (index.html) writes its current state to a JSON-LD doc on
+# the pod and subscribes to changes via WebSocket. This script does a
+# read-modify-write on the same doc; the viewer reflects the change in
+# real time.
+#
+# Defaults to the state doc on the running jspod. Override:
+#   PDF_STATE=http://your.pod/public/pdf/state.jsonld pdf-remote next
+#
+# Requires: curl, jq.
+
+set -eu
+
+STATE="${PDF_STATE:-http://localhost:5444/public/pdf/state.jsonld}"
+
+usage() {
+  cat <<EOF
+usage: pdf-remote <command>
+
+commands:
+  next         turn to the next page
+  prev         turn to the previous page
+  page <n>     jump to page n
+  get          print the current state as JSON
+
+env:
+  PDF_STATE    state doc URL (default: ${STATE})
+EOF
+  exit 1
+}
+
+cmd="${1:-}"
+[ -z "$cmd" ] && usage
+
+if [ "$cmd" = "get" ]; then
+  curl -fsS "$STATE"
+  echo
+  exit 0
+fi
+
+doc=$(curl -fsS "$STATE")
+cur=$(printf '%s' "$doc" | jq -r '.["schema:additionalProperty"].page // 1')
+
+case "$cmd" in
+  next)  new=$((cur + 1)) ;;
+  prev)  new=$((cur - 1)); [ "$new" -lt 1 ] && new=1 ;;
+  page)
+    [ "${2:-}" = "" ] && usage
+    new="$2"
+    ;;
+  *) usage ;;
+esac
+
+new_doc=$(printf '%s' "$doc" \
+  | jq --argjson p "$new" \
+       '.["schema:additionalProperty"].page = $p
+        | .["schema:dateModified"] = (now | todate)')
+
+curl -fsS -X PUT \
+     -H 'Content-Type: application/ld+json' \
+     --data-raw "$new_doc" \
+     "$STATE" > /dev/null
+
+echo "page: $cur -> $new"

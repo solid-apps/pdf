@@ -107,7 +107,7 @@ async function openPdf(url, li) {
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const ab = await r.arrayBuffer();
     currentDoc = await pdfjsLib.getDocument({ data: ab }).promise;
-    pageNum = 1;
+    pageNum = await loadResumePage(url, currentDoc.numPages);
     scale = await fitPageScale(currentDoc);
     [prevBtn, nextBtn, zoomIn, zoomOut, fitBtn, fsBtn].forEach(b => b.disabled = false);
     renderPage();
@@ -115,6 +115,24 @@ async function openPdf(url, li) {
     titleEl.textContent = 'Error: ' + e.message;
     currentDoc = null;
   }
+}
+
+// Per-PDF resume: sibling `<pdfUrl>.state.jsonld` stores the last page.
+// Owner-write, public-read by inheritance from /public/.acl; no ACL
+// management needed.
+async function loadResumePage(pdfUrl, numPages) {
+  try {
+    const r = await authFetch(perPdfStateUrl(pdfUrl), { cache: 'no-store' });
+    if (!r.ok) return 1;
+    const s = await r.json();
+    const p = s['schema:additionalProperty']?.page;
+    if (typeof p === 'number') return Math.max(1, Math.min(p, numPages));
+  } catch {}
+  return 1;
+}
+
+function perPdfStateUrl(pdfUrl) {
+  return pdfUrl + '.state.jsonld';
 }
 
 // Default scale: fit the first page entirely inside the viewer pane
@@ -143,7 +161,145 @@ async function renderPage() {
   zoomEl.textContent = Math.round(scale * 100) + '%';
   prevBtn.disabled = pageNum <= 1;
   nextBtn.disabled = pageNum >= currentDoc.numPages;
+  pushState();
 }
+
+// ---- Solid remote control: shared state on /public/pdf/state.jsonld ----
+// The viewer writes {pdfUrl, page} on every page change and subscribes
+// to the same doc via the legacy WebSocket protocol. Anything else that
+// PUTs the doc (the bundled CLI, a phone, curl) drives this viewer.
+
+const STATE_URL = `${window.location.origin}/public/pdf/state.jsonld`;
+const STATE_ACL = STATE_URL + '.acl';
+let pushTimer = null;
+let lastPushed = null;
+let stateInitialized = false;
+
+async function ensureStateDoc() {
+  if (stateInitialized) return;
+  stateInitialized = true;
+  // Doc and ACL are checked independently: if a prior session created
+  // the doc but failed to seed the ACL (or vice versa), the next run
+  // fills in what's missing instead of skipping both.
+  try {
+    const dr = await authFetch(STATE_URL, { method: 'HEAD' });
+    if (!dr.ok) {
+      await authFetch(STATE_URL, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/ld+json' },
+        body: JSON.stringify({
+          '@context': { 'schema': 'https://schema.org/' },
+          '@id': '#state',
+          '@type': 'schema:ReadAction',
+          'schema:object': null,
+          'schema:additionalProperty': { page: 1 },
+          'schema:dateModified': new Date().toISOString()
+        })
+      });
+    }
+  } catch (e) { console.warn('Could not seed state doc:', e.message); }
+
+  // JSS rejects Turtle for ACL writes — must be application/ld+json.
+  try {
+    const ar = await authFetch(STATE_ACL, { method: 'HEAD' });
+    if (!ar.ok) {
+      await authFetch(STATE_ACL, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/ld+json' },
+        body: JSON.stringify({
+          '@context': {
+            'acl': 'http://www.w3.org/ns/auth/acl#',
+            'foaf': 'http://xmlns.com/foaf/0.1/'
+          },
+          '@graph': [
+            {
+              '@id': '#owner',
+              '@type': 'acl:Authorization',
+              'acl:agent': { '@id': '/profile/card.jsonld#me' },
+              'acl:accessTo': { '@id': 'state.jsonld' },
+              'acl:mode': [{ '@id': 'acl:Read' }, { '@id': 'acl:Write' }, { '@id': 'acl:Control' }]
+            },
+            {
+              '@id': '#public',
+              '@type': 'acl:Authorization',
+              'acl:agentClass': { '@id': 'foaf:Agent' },
+              'acl:accessTo': { '@id': 'state.jsonld' },
+              'acl:mode': [{ '@id': 'acl:Read' }, { '@id': 'acl:Write' }]
+            }
+          ]
+        })
+      });
+    }
+  } catch (e) { console.warn('Could not seed state ACL:', e.message); }
+}
+
+function pushState() {
+  if (!currentPdfUrl) return;
+  clearTimeout(pushTimer);
+  pushTimer = setTimeout(async () => {
+    // Dedupe on content (ignore timestamp) — prevents echo loop when
+    // receiving our own WS update and re-rendering.
+    const key = `${currentPdfUrl}#${pageNum}`;
+    if (key === lastPushed) return;
+    lastPushed = key;
+    await ensureStateDoc();
+    const body = JSON.stringify({
+      '@context': { 'schema': 'https://schema.org/' },
+      '@id': '#state',
+      '@type': 'schema:ReadAction',
+      'schema:object': currentPdfUrl,
+      'schema:additionalProperty': { page: pageNum },
+      'schema:dateModified': new Date().toISOString()
+    });
+    try {
+      await authFetch(STATE_URL, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/ld+json' },
+        body
+      });
+    } catch (e) { /* best-effort; CLI/peer still works on next change */ }
+    // Resume info: per-PDF doc, owner-auth, public-read inherited.
+    try {
+      await authFetch(perPdfStateUrl(currentPdfUrl), {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/ld+json' },
+        body
+      });
+    } catch (e) { /* best-effort */ }
+  }, 120);
+}
+
+async function subscribeState() {
+  await ensureStateDoc();
+  let r;
+  try { r = await fetch(STATE_URL); } catch { return; }
+  const wsUrl = r.headers.get('updates-via');
+  if (!wsUrl) { console.warn('No updates-via header — remote control offline'); return; }
+
+  let backoff = 500;
+  const connect = () => {
+    const ws = new WebSocket(wsUrl);
+    ws.onopen = () => { backoff = 500; ws.send(`sub ${STATE_URL}`); };
+    ws.onmessage = async (e) => {
+      if (typeof e.data !== 'string' || !e.data.startsWith('pub ')) return;
+      try {
+        const sr = await fetch(STATE_URL, { cache: 'no-store' });
+        if (!sr.ok) return;
+        const s = await sr.json();
+        const newPage = s['schema:additionalProperty']?.page;
+        if (typeof newPage === 'number' && newPage !== pageNum && currentDoc) {
+          pageNum = Math.max(1, Math.min(newPage, currentDoc.numPages));
+          renderPage();
+        }
+      } catch { /* ignore parse blips */ }
+    };
+    ws.onclose = () => setTimeout(connect, backoff = Math.min(backoff * 2, 10000));
+    ws.onerror = () => ws.close();
+  };
+  connect();
+}
+
+subscribeState();
 
 prevBtn.addEventListener('click', () => { if (pageNum > 1) { pageNum--; renderPage(); } });
 nextBtn.addEventListener('click', () => { if (currentDoc && pageNum < currentDoc.numPages) { pageNum++; renderPage(); } });
