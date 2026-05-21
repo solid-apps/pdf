@@ -1,0 +1,14 @@
+{
+  "name": "pdf",
+  "short_name": "pdf",
+  "description": "PDF reader with remote control and per-PDF resume",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#ef4444",
+  "theme_color": "#ef4444",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" }
+  ]
+}
