@@ -175,17 +175,18 @@ let pushTimer = null;
 let lastPushed = null;
 
 // Self-healing seed: probe doc + ACL on every call and PUT whichever
-// is missing. No sticky cache — page load may run this before xlogin
-// restored its session, in which case the PUTs 401 silently; the next
-// `pushState()` retries with auth ready. Also recovers if state.jsonld
-// or its ACL is deleted at runtime. Two HEADs per call is cheap and
-// gated by pushState's 120ms debounce.
+// is genuinely missing (HEAD → 404). A 401/403 means the resource
+// exists but we lack acl:Control — expected for public/CLI viewers,
+// since the state doc is public read/write — so we skip it silently
+// rather than firing a doomed PUT. Recovers if state.jsonld or its ACL
+// is deleted at runtime. Two HEADs per call is cheap and gated by
+// pushState's 120ms debounce.
 async function ensureStateDoc() {
-  // Seed the doc if missing.
+  // Seed the doc only if genuinely missing. 401/403 = exists but not ours.
   let docOk = false;
   try {
     const r = await authFetch(STATE_URL, { method: 'HEAD' });
-    docOk = r.ok;
+    docOk = r.ok || r.status === 401 || r.status === 403;
   } catch {}
   if (!docOk) {
     try {
@@ -210,7 +211,10 @@ async function ensureStateDoc() {
   let aclOk = false;
   try {
     const r = await authFetch(STATE_ACL, { method: 'HEAD' });
-    aclOk = r.ok;
+    // 401/403 = the ACL exists but we're not the owner (no acl:Control).
+    // The state doc is public read/write, so leave the existing ACL alone;
+    // only a 404 means it's truly missing and worth seeding.
+    aclOk = r.ok || r.status === 401 || r.status === 403;
   } catch {}
   if (!aclOk) {
     try {
